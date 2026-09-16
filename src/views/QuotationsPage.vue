@@ -60,6 +60,7 @@ const form = reactive({
   expiryDate: '',
   currency: DEFAULT_CURRENCY,
   notes: '',
+  excludeVat: false,
   items: [{ productId: '', description: '', quantity: 1, unitPrice: 0 }] as QuotationFormItem[],
 })
 
@@ -189,6 +190,7 @@ const resetForm = () => {
   form.expiryDate = ''
   form.currency = DEFAULT_CURRENCY
   form.notes = ''
+  form.excludeVat = false
   form.items = [{ productId: '', description: '', quantity: 1, unitPrice: 0 }]
 }
 
@@ -220,6 +222,7 @@ const openEdit = async (quotation: Quotation) => {
     form.expiryDate = detail.expiryDate ? detail.expiryDate.slice(0, 10) : ''
     form.currency = detail.currency || DEFAULT_CURRENCY
     form.notes = detail.notes ?? ''
+    form.excludeVat = Boolean(detail.excludeVat)
     form.items = detail.items.length
       ? detail.items.map((item) => ({
           productId: item.productId ?? '',
@@ -268,10 +271,11 @@ const itemUnitPrice = (item: QuotationFormItem) => {
 }
 
 const taxPercent = computed(() => Number(settingsQuery.data.value?.defaultTaxPercent ?? 0))
+const effectiveTaxPercent = computed(() => (form.excludeVat ? 0 : taxPercent.value))
 const subtotalPreview = computed(() =>
   form.items.reduce((sum, item) => sum + itemQuantity(item) * itemUnitPrice(item), 0),
 )
-const taxPreview = computed(() => (subtotalPreview.value * taxPercent.value) / 100)
+const taxPreview = computed(() => (subtotalPreview.value * effectiveTaxPercent.value) / 100)
 const totalPreview = computed(() => subtotalPreview.value + taxPreview.value)
 
 const submitForm = async () => {
@@ -293,6 +297,7 @@ const submitForm = async () => {
     expiryDate: form.expiryDate || undefined,
     currency: form.currency || DEFAULT_CURRENCY,
     notes: form.notes || undefined,
+    excludeVat: form.excludeVat,
     items: form.items.map((item) => ({
       productId: item.productId || undefined,
       description: item.description?.trim() || undefined,
@@ -525,6 +530,10 @@ const openPreview = async (quotationId: string) => {
             <input v-model="form.issueDate" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" type="date" />
             <input v-model="form.expiryDate" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" type="date" />
             <textarea v-model="form.notes" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 sm:col-span-2" rows="2" placeholder="Notes" />
+            <label class="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 sm:col-span-2">
+              <input v-model="form.excludeVat" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-500" />
+              Exclude VAT on this quotation
+            </label>
           </div>
 
           <div class="space-y-2">
@@ -564,7 +573,7 @@ const openPreview = async (quotationId: string) => {
             <p class="font-medium">Quotation Totals Preview</p>
             <div class="mt-2 grid gap-1 sm:max-w-sm sm:ml-auto">
               <div class="flex items-center justify-between"><span>Subtotal</span><span>{{ form.currency }} {{ subtotalPreview.toFixed(2) }}</span></div>
-              <div class="flex items-center justify-between"><span>Tax ({{ taxPercent.toFixed(2) }}%)</span><span>{{ form.currency }} {{ taxPreview.toFixed(2) }}</span></div>
+              <div class="flex items-center justify-between"><span>Tax ({{ effectiveTaxPercent.toFixed(2) }}%)</span><span>{{ form.currency }} {{ taxPreview.toFixed(2) }}</span></div>
               <div class="flex items-center justify-between font-semibold"><span>Total</span><span>{{ form.currency }} {{ totalPreview.toFixed(2) }}</span></div>
             </div>
           </div>

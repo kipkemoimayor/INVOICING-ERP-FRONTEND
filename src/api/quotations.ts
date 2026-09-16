@@ -15,6 +15,7 @@ export type QuotationPayload = {
   expiryDate?: string
   currency?: string
   notes?: string
+  excludeVat?: boolean
   status?: QuotationStatus
   items: QuotationItemPayload[]
 }
@@ -28,6 +29,7 @@ export type Quotation = {
   expiryDate?: string | null
   currency: string
   totalAmount: string
+  excludeVat?: boolean
   invoiceId?: string | null
   convertedToInvoice?: boolean
   customer?: { id: string; companyName: string }

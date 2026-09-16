@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import {
   fetchTenantConfiguration,
+  fetchTenantLogo,
   uploadTenantLogo,
   updateTenantConfiguration,
 } from '@/api/settings'
-import { API_BASE_URL, extractApiErrorMessage } from '@/lib/api'
+import { extractApiErrorMessage } from '@/lib/api'
 
 const queryClient = useQueryClient()
 const toast = ref<{ type: 'success' | 'error'; message: string } | null>(null)
+const logoUrl = ref('')
 let toastTimer: number | undefined
 
 const form = reactive({
@@ -22,6 +24,13 @@ const form = reactive({
   phone: '',
   email: '',
   website: '',
+  kraPin: '',
+  bankName: '',
+  bankAccountNumber: '',
+  mpesaAccountType: 'TILL' as 'TILL' | 'PAYBILL',
+  mpesaTillNumber: '',
+  mpesaPaybillNumber: '',
+  mpesaAccountNumber: '',
   preparedByLabel: 'Prepared by',
   lpoLabel: 'LPO NO',
   commentsLabel: 'Comments or Special Instructions',
@@ -39,11 +48,26 @@ const settingsQuery = useQuery({
   refetchOnReconnect: false,
 })
 
-const logoUrl = computed(() =>
-  settingsQuery.data.value?.logoPath
-    ? `${API_BASE_URL}/settings/tenant/logo?t=${Date.now()}`
-    : '',
-)
+const refreshLogoPreview = async () => {
+  const current = settingsQuery.data.value
+  if (!current?.logoPath) {
+    if (logoUrl.value.startsWith('blob:')) {
+      URL.revokeObjectURL(logoUrl.value)
+    }
+    logoUrl.value = ''
+    return
+  }
+
+  try {
+    const nextLogoUrl = await fetchTenantLogo()
+    if (logoUrl.value.startsWith('blob:')) {
+      URL.revokeObjectURL(logoUrl.value)
+    }
+    logoUrl.value = nextLogoUrl
+  } catch {
+    logoUrl.value = ''
+  }
+}
 
 const showToast = (type: 'success' | 'error', message: string) => {
   toast.value = { type, message }
@@ -63,6 +87,13 @@ const syncForm = () => {
   form.phone = data.phone ?? ''
   form.email = data.email ?? ''
   form.website = data.website ?? ''
+  form.kraPin = data.kraPin ?? data.taxPin ?? ''
+  form.bankName = data.bankName ?? ''
+  form.bankAccountNumber = data.bankAccountNumber ?? ''
+  form.mpesaAccountType = data.mpesaAccountType === 'PAYBILL' ? 'PAYBILL' : 'TILL'
+  form.mpesaTillNumber = data.mpesaTillNumber ?? ''
+  form.mpesaPaybillNumber = data.mpesaPaybillNumber ?? ''
+  form.mpesaAccountNumber = data.mpesaAccountNumber ?? ''
   form.preparedByLabel = data.preparedByLabel ?? 'Prepared by'
   form.lpoLabel = data.lpoLabel ?? 'LPO NO'
   form.commentsLabel = data.commentsLabel ?? 'Comments or Special Instructions'
@@ -102,6 +133,14 @@ const onSave = async () => {
     phone: form.phone.trim() || undefined,
     email: form.email.trim() || undefined,
     website: form.website.trim() || undefined,
+    kraPin: form.kraPin.trim() || undefined,
+    taxPin: form.kraPin.trim() || undefined,
+    bankName: form.bankName.trim() || undefined,
+    bankAccountNumber: form.bankAccountNumber.trim() || undefined,
+    mpesaAccountType: form.mpesaAccountType || undefined,
+    mpesaTillNumber: form.mpesaTillNumber.trim() || undefined,
+    mpesaPaybillNumber: form.mpesaPaybillNumber.trim() || undefined,
+    mpesaAccountNumber: form.mpesaAccountNumber.trim() || undefined,
     preparedByLabel: form.preparedByLabel.trim() || undefined,
     lpoLabel: form.lpoLabel.trim() || undefined,
     commentsLabel: form.commentsLabel.trim() || undefined,
@@ -123,9 +162,18 @@ const onLogoChange = async (event: Event) => {
 
 watch(
   () => settingsQuery.data.value,
-  () => syncForm(),
+  async () => {
+    syncForm()
+    await refreshLogoPreview()
+  },
   { immediate: true },
 )
+
+onBeforeUnmount(() => {
+  if (logoUrl.value.startsWith('blob:')) {
+    URL.revokeObjectURL(logoUrl.value)
+  }
+})
 </script>
 
 <template>
@@ -149,6 +197,26 @@ watch(
           <input v-model="form.phone" placeholder="Phone" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
           <input v-model="form.email" placeholder="Email" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
           <input v-model="form.website" placeholder="Website" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
+          <input v-model="form.kraPin" placeholder="KRA PIN / Tax PIN" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
+          <input v-model="form.bankName" placeholder="Bank Name" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
+          <input v-model="form.bankAccountNumber" placeholder="Bank Account Number" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
+          <div class="rounded-lg border border-slate-300 p-2 text-sm dark:border-slate-700 dark:bg-slate-900">
+            <label class="mb-2 block text-xs font-medium uppercase tracking-wide text-slate-500">Mpesa Mode</label>
+            <select v-model="form.mpesaAccountType" class="w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm dark:border-slate-600 dark:bg-slate-950">
+              <option value="TILL">Till</option>
+              <option value="PAYBILL">Paybill</option>
+            </select>
+          </div>
+          <input
+            v-if="form.mpesaAccountType === 'TILL'"
+            v-model="form.mpesaTillNumber"
+            placeholder="Mpesa Till Number"
+            class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          />
+          <template v-else>
+            <input v-model="form.mpesaPaybillNumber" placeholder="Mpesa Paybill Number" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
+            <input v-model="form.mpesaAccountNumber" placeholder="Mpesa Account Number" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
+          </template>
           <input v-model="form.defaultCurrency" placeholder="Default Currency (KSH)" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
           <input v-model.number="form.defaultTaxPercent" placeholder="Default Tax % (e.g 16)" type="number" min="0" step="0.01" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
           <input v-model.number="form.quotationNumberStart" placeholder="Quotation Number Start (e.g 100)" type="number" min="1" step="1" class="rounded-lg border border-slate-300 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900" />
