@@ -28,7 +28,14 @@ export type Quotation = {
   expiryDate?: string | null
   currency: string
   totalAmount: string
+  invoiceId?: string | null
+  convertedToInvoice?: boolean
   customer?: { id: string; companyName: string }
+}
+
+export type QuotationDetail = Quotation & {
+  notes?: string | null
+  items: Array<QuotationItemPayload & { id?: string }>
 }
 
 export type PaginatedQuotations = {
@@ -58,6 +65,17 @@ export async function fetchQuotations(params: {
 export async function createQuotation(payload: QuotationPayload) {
   return apiRequest<Quotation>('/quotations', {
     method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function fetchQuotationById(id: string) {
+  return apiRequest<QuotationDetail>(`/quotations/${id}`)
+}
+
+export async function updateQuotation(id: string, payload: QuotationPayload) {
+  return apiRequest<Quotation>(`/quotations/${id}`, {
+    method: 'PATCH',
     body: JSON.stringify(payload),
   })
 }

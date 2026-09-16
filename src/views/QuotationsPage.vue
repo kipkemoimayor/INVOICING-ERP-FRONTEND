@@ -9,9 +9,11 @@ import {
   convertQuotationToProforma,
   createQuotation,
   deleteQuotation,
+  fetchQuotationById,
   fetchQuotationPdf,
   fetchQuotations,
   resendQuotationEmail,
+  updateQuotation,
   updateQuotationStatus,
   type Quotation,
   type QuotationItemPayload,
@@ -48,6 +50,8 @@ const activeDeleteId = ref('')
 const activeResendId = ref('')
 const activePrintId = ref('')
 const activePreviewId = ref('')
+const activeEditId = ref('')
+const editingQuotation = ref<Quotation | null>(null)
 const toast = ref<{ type: 'success' | 'error'; message: string } | null>(null)
 let toastTimer: number | undefined
 const form = reactive({
@@ -101,6 +105,18 @@ const createMutation = useMutation({
   onSuccess: async () => {
     await invalidateQuotations()
     isModalOpen.value = false
+  },
+  onError: (error) => showToast('error', extractApiErrorMessage(error)),
+})
+
+const updateMutation = useMutation({
+  mutationFn: ({ id, payload }: { id: string; payload: Parameters<typeof updateQuotation>[1] }) =>
+    updateQuotation(id, payload),
+  onSuccess: async () => {
+    await invalidateQuotations()
+    isModalOpen.value = false
+    editingQuotation.value = null
+    showToast('success', 'Quotation updated.')
   },
   onError: (error) => showToast('error', extractApiErrorMessage(error)),
 })
@@ -176,6 +192,50 @@ const resetForm = () => {
   form.items = [{ productId: '', description: '', quantity: 1, unitPrice: 0 }]
 }
 
+const closeForm = () => {
+  isModalOpen.value = false
+  editingQuotation.value = null
+  resetForm()
+}
+
+const openCreate = () => {
+  closeForm()
+  isModalOpen.value = true
+}
+
+const isQuotationEditable = (quotation: Quotation) =>
+  quotation.convertedToInvoice !== true && !quotation.invoiceId
+
+const openEdit = async (quotation: Quotation) => {
+  activeEditId.value = quotation.id
+  try {
+    const detail = await fetchQuotationById(quotation.id)
+    if (!isQuotationEditable(detail)) {
+      showToast('error', 'An invoiced quotation cannot be edited.')
+      return
+    }
+    editingQuotation.value = detail
+    form.customerId = detail.customerId
+    form.issueDate = detail.issueDate ? detail.issueDate.slice(0, 10) : ''
+    form.expiryDate = detail.expiryDate ? detail.expiryDate.slice(0, 10) : ''
+    form.currency = detail.currency || DEFAULT_CURRENCY
+    form.notes = detail.notes ?? ''
+    form.items = detail.items.length
+      ? detail.items.map((item) => ({
+          productId: item.productId ?? '',
+          description: item.description ?? '',
+          quantity: item.quantity ?? 1,
+          unitPrice: item.unitPrice ?? 0,
+        }))
+      : [{ productId: '', description: '', quantity: 1, unitPrice: 0 }]
+    isModalOpen.value = true
+  } catch (error) {
+    showToast('error', extractApiErrorMessage(error))
+  } finally {
+    activeEditId.value = ''
+  }
+}
+
 const productById = computed(() => {
   const map = new Map<string, Product>()
   for (const product of productsQuery.data.value?.data ?? []) {
@@ -227,7 +287,7 @@ const submitForm = async () => {
   })
   if (hasInvalidItem) return
 
-  await createMutation.mutateAsync({
+  const payload = {
     customerId: form.customerId,
     issueDate: form.issueDate || undefined,
     expiryDate: form.expiryDate || undefined,
@@ -239,7 +299,13 @@ const submitForm = async () => {
       quantity: isServiceProduct(item.productId) ? undefined : itemQuantity(item),
       unitPrice: itemUnitPrice(item) || undefined,
     })) as QuotationItemPayload[],
-  })
+  }
+
+  if (editingQuotation.value) {
+    await updateMutation.mutateAsync({ id: editingQuotation.value.id, payload })
+  } else {
+    await createMutation.mutateAsync(payload)
+  }
 }
 
 const setPage = (value: number) => {
@@ -323,7 +389,10 @@ const openPreview = async (quotationId: string) => {
         <h3 class="text-xl font-semibold">Quotations</h3>
         <p class="text-sm text-slate-500 dark:text-slate-400">Create, send, accept, and convert quotations to proforma invoices.</p>
       </div>
-      <button class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white dark:bg-slate-100 dark:text-slate-900" @click="isModalOpen = true">
+      <button
+        class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white dark:bg-slate-100 dark:text-slate-900"
+        @click="openCreate"
+      >
         New Quotation
       </button>
     </header>
@@ -364,6 +433,14 @@ const openPreview = async (quotationId: string) => {
               <td class="px-3 py-3">{{ quotation.totalAmount }} {{ quotation.currency || DEFAULT_CURRENCY }}</td>
               <td class="px-3 py-3"><StatusBadge :label="quotation.status" :tone="badgeTone(quotation.status)" /></td>
               <td class="px-3 py-3 text-right space-x-2">
+                <button
+                  v-if="isQuotationEditable(quotation)"
+                  class="rounded-md border border-amber-300 px-2 py-1 text-xs text-amber-700 dark:border-amber-700"
+                  :disabled="activeEditId === quotation.id"
+                  @click="openEdit(quotation)"
+                >
+                  {{ activeEditId === quotation.id ? 'Loading...' : 'Edit' }}
+                </button>
                 <button
                   v-if="nextStatus(quotation)"
                   class="rounded-md border border-slate-300 px-2 py-1 text-xs dark:border-slate-700"
@@ -428,8 +505,8 @@ const openPreview = async (quotationId: string) => {
     <div v-if="isModalOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
       <div class="w-full max-w-4xl rounded-xl border border-slate-200 bg-white p-5 shadow-lg dark:border-slate-800 dark:bg-slate-950">
         <div class="mb-4 flex items-center justify-between">
-          <h4 class="text-lg font-semibold">Create Quotation</h4>
-          <button class="text-sm text-slate-500" @click="isModalOpen = false">Close</button>
+          <h4 class="text-lg font-semibold">{{ editingQuotation ? 'Edit Quotation' : 'Create Quotation' }}</h4>
+          <button class="text-sm text-slate-500" @click="closeForm">Close</button>
         </div>
         <form class="space-y-4" @submit.prevent="submitForm">
           <div class="grid gap-3 sm:grid-cols-2">
@@ -493,9 +570,21 @@ const openPreview = async (quotationId: string) => {
           </div>
 
           <div class="flex justify-end gap-2">
-            <button class="rounded-lg border border-slate-300 px-4 py-2 text-sm dark:border-slate-700" type="button" @click="resetForm">Reset</button>
-            <button class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white dark:bg-slate-100 dark:text-slate-900" :disabled="createMutation.isPending.value" type="submit">
-              {{ createMutation.isPending.value ? 'Creating...' : 'Create Quotation' }}
+            <button class="rounded-lg border border-slate-300 px-4 py-2 text-sm dark:border-slate-700" type="button" @click="editingQuotation ? closeForm() : resetForm()">Reset</button>
+            <button
+              class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white dark:bg-slate-100 dark:text-slate-900"
+              :disabled="createMutation.isPending.value || updateMutation.isPending.value"
+              type="submit"
+            >
+              {{
+                updateMutation.isPending.value
+                  ? 'Saving...'
+                  : createMutation.isPending.value
+                    ? 'Creating...'
+                    : editingQuotation
+                      ? 'Save Changes'
+                      : 'Create Quotation'
+              }}
             </button>
           </div>
         </form>
